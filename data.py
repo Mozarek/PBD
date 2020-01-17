@@ -94,3 +94,11 @@ class WorkshopAdmission:
     def __init__(self, dayAdmissionID, workshopReservationID):
         self.dayAdmissionID = dayAdmissionID
         self.workshopReservationID = workshopReservationID
+
+
+class Payment:
+    def __init__(self, _id, conferenceReservationID, amount, date):
+        self.id = _id
+        self.conferenceReservationID = conferenceReservationID
+        self.amount = amount
+        self.date = date

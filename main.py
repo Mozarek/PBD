@@ -4,7 +4,7 @@ import datetime
 
 from faker import Faker
 
-from data import *
+from PBD.data import *
 
 fake = Faker()
 
@@ -19,6 +19,7 @@ allParticipants = list()
 allDayAdmissions = list()
 allWorkshopReservations = list()
 allWorkshopAdmissions = list()
+allPayments = list()
 
 
 def convertToSqlArgs(*argv):
@@ -33,13 +34,20 @@ def convertToSqlArgs(*argv):
     return q + ')'
 
 
+def convertToMoney(val):
+    return str(val//100) + '.' + str(val%100)
+
+
 def generateClients(number_of_clients):
     cols = '(name, phone, isCompany)'
     query = 'INSERT INTO [dbo].[Clients] ' + cols + ' VALUES '
     for i in range(number_of_clients):
-        name = fake.company()
-        phone = fake.phone_number()
         isCompany = random.randint(0, 1)
+        if isCompany == 1:
+            name = fake.company()
+        else:
+            name = fake.name()
+        phone = fake.phone_number()
         allClients.append(Client(i + 1, name, phone, isCompany))
         query += convertToSqlArgs(name, phone, isCompany) + ', '
     return query[:-2]
@@ -51,12 +59,12 @@ def generateConferences(number_of_conferences, fromDate, daysDelta):
     for i in range(number_of_conferences):
         name = fake.catch_phrase().split()[-1].capitalize() + \
                random.choice([' Days', ' Conference', ' Meet-up', 'Conf', ' Congress'])
-        price = random.randint(3, 79) * 10
+        price = random.randint(4, 34) * 10 * 100
         studentDiscount = random.random()
         startDate = fromDate + datetime.timedelta(days=random.randint(0, daysDelta))
         endDate = startDate + datetime.timedelta(days=random.randint(0, 2))
         allConferences.append(Conference(i + 1, name, price, studentDiscount, startDate, endDate))
-        query += convertToSqlArgs(name, price, studentDiscount, str(startDate), str(endDate)) + ', '
+        query += convertToSqlArgs(name)[:-1]+', '+ convertToMoney(price) + ', ' + convertToSqlArgs(studentDiscount, str(startDate), str(endDate))[1:] + ', '
     return query[:-2]
 
 
@@ -68,7 +76,7 @@ def generateDiscountThresholds(maxThresholdsPerConference):
     for conf in allConferences:
         numberOfThresholds = random.randint(0, maxThresholdsPerConference)
         if numberOfThresholds == 0:
-            break
+            continue
         d = random.randint(numberOfThresholds*3, 60)
         firstDate = conf.startDate - datetime.timedelta(days=d)
         splittingDays = sorted(random.sample(range(1, d-1), numberOfThresholds-1))
@@ -86,15 +94,15 @@ def generateDiscountThresholds(maxThresholdsPerConference):
 
 
 def generateConferenceDays():
-    cols = '(ConferenceID, Date, ParticipantLimit)'
+    cols = '(ConferenceID, Date, ParticipantsLimit)'
     query = 'INSERT INTO [dbo].[ConferenceDays] ' + cols + ' VALUES '
 
     i = 0
     for conf in allConferences:
-        numberOfDays = random.randint(0, 2)
+        numberOfDays = random.randint(1, 3)
         for j in range(numberOfDays):
             date = conf.startDate + datetime.timedelta(days=j)
-            limit = random.randint(5, 200)
+            limit = random.randint(5, 250)
             allConferenceDays.append(ConferenceDay(i + 1, conf.id, date, limit))
             query += convertToSqlArgs(conf.id, str(date), limit) + ', '
             i += 1
@@ -107,7 +115,7 @@ def generateWorkshops():
 
     i = 0
     for confDay in allConferenceDays:
-        numberOfWorkshops = random.randint(0, 5)
+        numberOfWorkshops = random.randint(0, 7)
         for j in range(numberOfWorkshops):
             name = random.choice([random.choice(['How to ', 'Deciding to ', 'Why I started to ']) + fake.bs(),
                                   random.choice(['The era of ', 'Novel approach to ', 'Pros and cons of ']) + " ".join(
@@ -115,9 +123,9 @@ def generateWorkshops():
             start = datetime.time(hour=random.randint(9, 17), minute=random.randint(0, 11) * 5)
             end = datetime.time(hour=start.hour + random.randint(1, 4), minute=start.minute)
             limit = random.randint(3, confDay.limit)
-            price = random.randint(1, 25) * 10
+            price = random.randint(1, 25) * 10 * 100
             allWorkshops.append(Workshop(i + 1, confDay.id, name, start, end, limit, price))
-            query += convertToSqlArgs(confDay.id, name, str(start), str(end), limit, price) + ', '
+            query += convertToSqlArgs(confDay.id, name, str(start), str(end), limit)[:-1] + ', ' + convertToMoney(price) + '), '
             i += 1
     return query[:-2]
 
@@ -140,7 +148,8 @@ def generateConferenceReservations(maxReservationsPerConference):
 
 def generateDayReservations(maxReservationsPerDay):
     cols = '(DayID, ReservationID, ParticipantsNumber, StudentParticipantsNumber)'
-    query = 'INSERT INTO [dbo].[DayReservations] ' + cols + ' VALUES '
+    queryStart = 'INSERT INTO [dbo].[DayReservations] ' + cols + ' VALUES '
+    query = queryStart
 
     i = 0
     for day in allConferenceDays:
@@ -151,16 +160,19 @@ def generateDayReservations(maxReservationsPerDay):
                 reservations.append(confReservation)
         reservations = random.sample(reservations, min(maxReservationsPerDay, len(reservations)))
         for reservation in reservations:
-            participants = random.randint(0, min(3 * day.limit / len(reservations), day.freePlaces))
+            participants = random.randint(1, min(3 * day.limit / len(reservations), day.freePlaces))
             studentParticipants = random.randint(0, participants)
             thresholdDiscount = 0
             for t in allThresholds:
                 if t.confID == conf.id and t.startDate <= reservation.registrationDate < t.endDate:
                     thresholdDiscount = t.discount
                     break
-            toPay = (1 - thresholdDiscount) * (conf.price * (1 - conf.studentDiscount) * studentParticipants +
-                                               conf.price * (participants - studentParticipants))
+            toPay = int((1 - thresholdDiscount) * (conf.price * (1 - conf.studentDiscount) * studentParticipants +
+                                                   conf.price * (participants - studentParticipants)))
             reservation.toPay += toPay
+
+            if i % 600 == 599:
+                query = query[:-2] + '\n' + queryStart
             allConferenceDayReservations.append(
                 DayReservation(i+1, day.id, reservation.id, participants, studentParticipants, toPay))
             query += convertToSqlArgs(day.id, reservation.id, participants, studentParticipants) + ', '
@@ -179,7 +191,7 @@ def generateDayAdmissions():
         dayParticipants = random.sample(allParticipants, min(participantsNumber, len(allParticipants)))
         for participant in dayParticipants:
             if i % 600 == 599:
-                query += '\n' + queryStart
+                query = query[:-2] + '\n' + queryStart
             isStudent = random.randint(0, 1)
             allDayAdmissions.append(DayAdmission(i+1, participant.id, dayReservation.id, isStudent))
             query += convertToSqlArgs(participant.id, dayReservation.id, isStudent) + ', '
@@ -194,7 +206,7 @@ def generateParticipants(participantsNumber):
 
     for i in range(0, participantsNumber):
         if i % 600 == 599:
-            query += '\n' + queryStart
+            query = query[:-2] + '\n' + queryStart
         name = fake.first_name()
         lastName = fake.last_name()
         email = fake.ascii_email()
@@ -217,7 +229,7 @@ def generateWorkshopReservations():
                 continue
             workshop.freePlaces -= participantsNumber
             if i % 600 == 599:
-                query += '\n' + queryStart
+                query = query[:-2] + '\n' + queryStart
             allWorkshopReservations.append(WorkshopReservation(i+1, workshop.id, dayReservation.id, participantsNumber))
             query += convertToSqlArgs(workshop.id, dayReservation.id, participantsNumber) + ', '
             i += 1
@@ -225,7 +237,7 @@ def generateWorkshopReservations():
 
 
 def generateWorkshopAdmissions():
-    cols = '(WorkshopID, DayAdmissionID)'
+    cols = '(DayAdmissionID, WorkshopReservationID)'
     queryStart = 'INSERT INTO [dbo].[WorkshopAdmissions] ' + cols + ' VALUES '
     query = queryStart
 
@@ -249,24 +261,55 @@ def generateWorkshopAdmissions():
             workshopReservation.notEnrolled -= 1
             enrolledForWorkshops.append(workshop)
             if i % 600 == 599:
-                query += '\n' + queryStart
+                query = query[:-2] + '\n' + queryStart
             allWorkshopAdmissions.append(WorkshopAdmission(dayAdmission.id, workshopReservation.id))
             query += convertToSqlArgs(dayAdmission.id, workshopReservation.id) + ', '
             i += 1
     return query[:-2]
 
 
-totalQuery = generateClients(5) + '\n' + \
-             generateConferences(5, datetime.date(year=2010, month=1, day=1), 8 * 365) + '\n' + \
+def generatePayments():
+    cols = '(ConferenceReservationID, Amount, Date)'
+    queryStart = 'INSERT INTO [dbo].[Payments] ' + cols + ' VALUES '
+    query = queryStart
+
+    i = 0
+    for conferenceReservation in allConferenceReservations:
+        if conferenceReservation.toPay == 0:
+            continue
+        instalmentsNumber = random.randint(1, 4)
+        confStartDate = allConferences[conferenceReservation.confID-1].startDate
+        dayDiff = min((confStartDate - conferenceReservation.registrationDate).days, 7)
+        toPay = conferenceReservation.toPay-instalmentsNumber
+        for j in range(instalmentsNumber):
+            paymentDate = conferenceReservation.registrationDate + datetime.timedelta(days=random.randint(0, dayDiff))
+            if j == instalmentsNumber-1:
+                value = toPay
+            elif toPay <= 0:
+                value = 0
+            else:
+                value = random.randint(0, toPay)
+            toPay -= value
+            if i % 600 == 599:
+                query = query[:-2] + '\n' + queryStart
+            allPayments.append(Payment(i+1, conferenceReservation.id, value+1, paymentDate))
+            query += convertToSqlArgs(conferenceReservation.id)[:-1] + ', ' + convertToMoney(value) + ', \'' +  str(paymentDate) + '\'), '
+            i += 1
+    return query[:-2]
+
+
+totalQuery = generateClients(250) + '\n' + \
+             generateConferences(80, datetime.date(year=2017, month=1, day=1), 3 * 365) + '\n' + \
              generateDiscountThresholds(4) + '\n' + \
              generateConferenceDays() + '\n' + \
              generateWorkshops() + '\n' + \
-             generateConferenceReservations(2) + '\n' + \
-             generateDayReservations(3) + '\n' + \
-             generateParticipants(100) + '\n' + \
+             generateConferenceReservations(15) + '\n' + \
+             generateDayReservations(10) + '\n' + \
+             generateParticipants(3500) + '\n' + \
              generateDayAdmissions() + '\n' + \
              generateWorkshopReservations() + '\n' + \
-             generateWorkshopAdmissions()
+             generateWorkshopAdmissions() + '\n' + \
+             generatePayments()
 
 
 with open('query.sql', 'w') as f:
