@@ -60,7 +60,7 @@ def generateConferences(number_of_conferences, fromDate, daysDelta):
         name = fake.catch_phrase().split()[-1].capitalize() + \
                random.choice([' Days', ' Conference', ' Meet-up', 'Conf', ' Congress'])
         price = random.randint(4, 34) * 10 * 100
-        studentDiscount = random.random()
+        studentDiscount = random.randint(0, 100)/100
         startDate = fromDate + datetime.timedelta(days=random.randint(0, daysDelta))
         endDate = startDate + datetime.timedelta(days=random.randint(0, 2))
         allConferences.append(Conference(i + 1, name, price, studentDiscount, startDate, endDate))
@@ -83,7 +83,7 @@ def generateDiscountThresholds(maxThresholdsPerConference):
         splittingDays.append(d)
         lastDay = 0
         for splitDay in splittingDays:
-            discount = random.choice([random.random(), random.random(), random.random(), -random.random()])
+            discount = random.choice([random.randint(0, 100), random.randint(0, 100), random.randint(0, 100), -random.randint(0, 100)])/100
             startDate = firstDate + datetime.timedelta(days=lastDay)
             endDate = firstDate + datetime.timedelta(days=splitDay)
             lastDay = splitDay
@@ -99,7 +99,7 @@ def generateConferenceDays():
 
     i = 0
     for conf in allConferences:
-        numberOfDays = random.randint(1, 3)
+        numberOfDays = random.randint(1, 4)
         for j in range(numberOfDays):
             date = conf.startDate + datetime.timedelta(days=j)
             limit = random.randint(5, 250)
@@ -156,20 +156,23 @@ def generateDayReservations(maxReservationsPerDay):
         conf = allConferences[day.confID - 1]
         reservations = list()
         for confReservation in allConferenceReservations:
-            if confReservation.id == day.confID:
+            if confReservation.confID == day.confID:
                 reservations.append(confReservation)
         reservations = random.sample(reservations, min(maxReservationsPerDay, len(reservations)))
         for reservation in reservations:
-            participants = random.randint(1, min(3 * day.limit / len(reservations), day.freePlaces))
+            if day.freePlaces <= 1:
+                break
+            participants = random.randint(1, min(3 * day.limit // len(reservations), day.freePlaces))
             studentParticipants = random.randint(0, participants)
             thresholdDiscount = 0
             for t in allThresholds:
                 if t.confID == conf.id and t.startDate <= reservation.registrationDate < t.endDate:
                     thresholdDiscount = t.discount
                     break
-            toPay = int((1 - thresholdDiscount) * (conf.price * (1 - conf.studentDiscount) * studentParticipants +
-                                                   conf.price * (participants - studentParticipants)))
+            toPay = int((1 - thresholdDiscount) * conf.price*((1 - conf.studentDiscount) * studentParticipants +
+                                                              (participants - studentParticipants)))
             reservation.toPay += toPay
+            day.freePlaces -= participants
 
             if i % 600 == 599:
                 query = query[:-2] + '\n' + queryStart
@@ -187,14 +190,24 @@ def generateDayAdmissions():
 
     i = 0
     for dayReservation in allConferenceDayReservations:
-        participantsNumber = dayReservation.participantsNumber
-        dayParticipants = random.sample(allParticipants, min(participantsNumber, len(allParticipants)))
-        for participant in dayParticipants:
+        fullParticipantsNumber = dayReservation.participantsNumber - dayReservation.studentParticipantsNumber
+        studentParticipantsNumber = dayReservation.studentParticipantsNumber
+        dayParticipants = random.sample(allParticipants, dayReservation.participantsNumber)
+        for student in dayParticipants[:studentParticipantsNumber]:
+            isStudent = 1
             if i % 600 == 599:
                 query = query[:-2] + '\n' + queryStart
-            isStudent = random.randint(0, 1)
-            allDayAdmissions.append(DayAdmission(i+1, participant.id, dayReservation.id, isStudent))
-            query += convertToSqlArgs(participant.id, dayReservation.id, isStudent) + ', '
+            allDayAdmissions.append(DayAdmission(i + 1, student.id, dayReservation.id, isStudent))
+            query += convertToSqlArgs(student.id, dayReservation.id, isStudent) + ', '
+            i += 1
+        if fullParticipantsNumber == 0:
+            continue
+        for adult in dayParticipants[-fullParticipantsNumber:]:
+            if i % 600 == 599:
+                query = query[:-2] + '\n' + queryStart
+            isStudent = 0
+            allDayAdmissions.append(DayAdmission(i+1, adult.id, dayReservation.id, isStudent))
+            query += convertToSqlArgs(adult.id, dayReservation.id, isStudent) + ', '
             i += 1
     return query[:-2]
 
@@ -224,10 +237,11 @@ def generateWorkshopReservations():
     for workshop in allWorkshops:
         dayReservations = [dr for dr in allConferenceDayReservations if dr.dayID == workshop.dayID]
         for dayReservation in dayReservations:
-            participantsNumber = random.randint(0, workshop.freePlaces)
+            participantsNumber = random.randint(0, min(workshop.freePlaces, dayReservation.participantsNumber))
             if participantsNumber == 0:
                 continue
             workshop.freePlaces -= participantsNumber
+            allConferenceReservations[dayReservation.reservationID-1].toPay += workshop.price*participantsNumber
             if i % 600 == 599:
                 query = query[:-2] + '\n' + queryStart
             allWorkshopReservations.append(WorkshopReservation(i+1, workshop.id, dayReservation.id, participantsNumber))
